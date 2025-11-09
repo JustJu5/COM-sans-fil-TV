@@ -1,12 +1,18 @@
 #include "mafenetre.h"
 #include "ui_mafenetre.h"
+
 #include "MfErrNo.h"
 #include "Sw_Device.h"
-#include "Sw_ISO14443A-3.h"
 #include "Sw_Mf_Classic.h"
+#include "Sw_ISO14443A-3.h"
 #include "Tools.h"
 #include "TypeDefs.h"
+
 #include <QDebug>
+#include <QCoreApplication>
+
+ReaderName MonLecteur;
+bool lecteurConnecte = false;
 
 MaFenetre::MaFenetre(QWidget *parent)
     : QWidget(parent)
@@ -20,91 +26,141 @@ MaFenetre::~MaFenetre()
     delete ui;
 }
 
-ReaderName MonLecteur;
-
-void MaFenetre::on_pushButtonConnect_clicked()
+void MaFenetre::on_Connect_clicked()
 {
-    int16_t status = MI_OK;
     MonLecteur.Type = ReaderCDC;
     MonLecteur.device = 0;
-    status = OpenCOM(&MonLecteur);
-    qDebug() << "OpenCOM" << status;
-}
+    RF_Power_Control(&MonLecteur, TRUE, 0);
 
-void MaFenetre::on_pushButtonDeconnect_clicked()
-{
-    qDebug() << "Déconnexion Carte déconnectée !";
-}
-
-void MaFenetre::on_pushButtonQuitter_clicked()
-{
-    close();
-}
-
-
-void MaFenetre::on_pushButtonPayer_clicked()
-{
-    /*int solde = ui->labelSolde->text().toInt();
-    int montant = ui->spinBoxDecrement->value();
-
-    if (montant > solde) {
-        QMessageBox::warning(this, "Erreur", "Solde insuffisant !");
-    } else {
-        solde -= montant;
-        ui->labelSolde->setText(QString::number(solde));
-        QMessageBox::information(this, "Paiement", QString::number(montant) + " unités payées.");
-    }*/
-}
-
-void MaFenetre::on_pushButtonCharger_clicked()
-{
-    /*int solde = ui->labelSolde->text().toInt();
-    int montant = ui->spinBoxIncrement->value();
-
-    solde += montant;
-    ui->labelSolde->setText(QString::number(solde));*/
-    //QMessageBox::information(this, "Chargement", QString::number(montant) + " unités ajoutées.");
-}
-
-
-void MaFenetre::on_pushButtonMiseAJour_clicked()
-{
-   ////QString nom = ui->lineEditNom->text();
-
-    //if (prenom.isEmpty() || nom.isEmpty()) {
-        //QMessageBox::warning(this, "Erreur", "Veuillez remplir les deux champs !");
-      /*  return;
-    }
-
-    // Conversion en tableau de char pour la librairie ODALID
-    QByteArray prenomData = prenom.toUtf8();
-    QByteArray nomData = nom.toUtf8();
-
-    // Exemple fictif d’écriture dans la carte (à adapter avec les vraies fonctions ODALID)
-    int status;
-
-    // Authentifier le secteur 2 avec la clé B (index 2)
-    status = Mf_Classic_Authenticate(readerHandle, 2, 2, KEY_B);
-    if (status != 0) {
-        //QMessageBox::critical(this, "Erreur", "Échec de l'authentification !");
+    if (OpenCOM(&MonLecteur) != MI_OK) {
+        ui->Affichage->setText("Erreur connexion lecteur.");
         return;
     }
 
-    // Écrire prénom dans le bloc 9
-    status = Mf_Classic_Write_Block(readerHandle, 2, 9, prenomData.data());
-    if (status != 0) {
-        //QMessageBox::critical(this, "Erreur", "Échec de l’écriture du prénom !");
+    Version(&MonLecteur);
+    ui->Affichage->setText("Connecté : " + QString(MonLecteur.version));
+    lecteurConnecte = true;
+}
+
+void MaFenetre::on_Disconnect_clicked()
+{
+    RF_Power_Control(&MonLecteur, FALSE, 0);
+    LEDBuzzer(&MonLecteur, LED_OFF);
+    CloseCOM(&MonLecteur);
+    ui->Affichage->setText("Déconnecté.");
+    lecteurConnecte = false;
+}
+
+void MaFenetre::on_Quitter_clicked()
+{
+    if (lecteurConnecte) {
+        RF_Power_Control(&MonLecteur, FALSE, 0);
+        LEDBuzzer(&MonLecteur, LED_OFF);
+        CloseCOM(&MonLecteur);
+    }
+    QCoreApplication::quit();
+}
+
+
+void MaFenetre::on_LireCarte_clicked()
+{
+    uint8_t atq[2];
+    uint8_t sak[1];
+    uint8_t uid[10];
+    uint16_t uidLength = 0;
+
+    int16_t status = ISO14443_3_A_PollCard(&MonLecteur, atq, sak, uid, &uidLength);
+
+    if (status != MI_OK || uidLength == 0) {
+        ui->Affichage->setText("Carte non détectée.");
         return;
     }
 
-    // Écrire nom dans le bloc 10
-    status = Mf_Classic_Write_Block(readerHandle, 2, 10, nomData.data());
-    if (status != 0) {
-        //QMessageBox::critical(this, "Erreur", "Échec de l’écriture du nom !");
-        return;
-    }*/
+    QString uidStr;
+    for (int i = 0; i < uidLength; ++i) {
+        uidStr += QString("%1 ").arg(uid[i], 2, 16, QChar('0')).toUpper();
+    }
 
-    //QMessageBox::information(this, "Succès", "Identité enregistrée dans la carte !");
+    ui->Affichage->setText("Carte détectée : UID = " + uidStr.trimmed());
 }
 
+void MaFenetre::on_MiseAJour_clicked()
+{
+    QString nom = "zaiem";
+    QString prenom = "juliette";
+
+    uint8_t cle[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+    // Authentification sur le secteur 1 avec clé A externe
+    int16_t status = Mf_Classic_Authenticate(&MonLecteur, AuthKeyA, FALSE, 1, cle, 1);
+    if (status != MI_OK) {
+        ui->Affichage->setText("Échec de l'authentification.");
+        return;
+    }
+
+    // Préparation des données
+    QByteArray nomData = nom.left(16).toUtf8().leftJustified(16, '\0');
+    QByteArray prenomData = prenom.left(16).toUtf8().leftJustified(16, '\0');
+
+
+
+
+
+    ui->Affichage->setText("Identité enregistrée : " + nom.toUpper() + " " + prenom.toUpper());
+}
+
+
+
+void MaFenetre::on_Payer_clicked()
+{
+    int montant = ui->unitsToPay->value();
+    if (montant <= 0) {
+        ui->Affichage->setText("Montant invalide.");
+        return;
+    }
+
+    uint8_t cle[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    int16_t status;
+
+    status = Mf_Classic_Authenticate(&MonLecteur, AuthKeyA, TRUE, 3, cle, 3);
+    if (status != MI_OK) {
+        ui->Affichage->setText("Échec authentification.");
+        return;
+    }
+
+    status = Mf_Classic_Decrement_Value(&MonLecteur, TRUE, 14, montant, 14, AuthKeyA, 3);
+    if (status != MI_OK) {
+        ui->Affichage->setText("Erreur décrémentation.");
+        return;
+    }
+
+    ui->Affichage->setText("Paiement effectué !");
+}
+
+
+void MaFenetre::on_Charger_clicked()
+{
+    int montant = ui->unitsToAdd->value();
+    if (montant <= 0) {
+        ui->Affichage->setText("Montant invalide.");
+        return;
+    }
+
+    uint8_t cle[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    int16_t status;
+
+    status = Mf_Classic_Authenticate(&MonLecteur, AuthKeyB, TRUE, 3, cle, 3);
+    if (status != MI_OK) {
+        ui->Affichage->setText("Échec authentification.");
+        return;
+    }
+
+    status = Mf_Classic_Increment_Value(&MonLecteur, TRUE, 14, montant, 14, AuthKeyB, 3);
+    if (status != MI_OK) {
+        ui->Affichage->setText("Erreur incrémentation.");
+        return;
+    }
+
+    ui->Affichage->setText("Chargement effectué !");
+}
 

@@ -1,0 +1,9 @@
+<RCC>
+    <qresource prefix="/images">
+        <file>images/LogoCarteSansFil.png</file>
+        <file>images/jzfinal.png</file>
+        <file>images/sanscontct.png</file>
+        <file>images/etoile.png</file>
+        <file>images/etoile2.png</file>
+    </qresource>
+</RCC>
